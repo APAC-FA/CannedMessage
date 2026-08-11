@@ -1,2 +1,0 @@
-# CannedMessage
-Standard Canned Messages
