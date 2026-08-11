@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
@@ -77,6 +76,11 @@
   }
   .save-status.saving{ color:var(--amber); }
   .save-status.saved{ color:var(--green); }
+  .storage-note{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px; color:var(--text-faint);
+    white-space:nowrap;
+  }
   .search-wrap{ position:relative; }
   #search{
     width:100%;
@@ -269,31 +273,6 @@
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 
-  .modal-overlay{
-    position:fixed; inset:0; background:rgba(0,0,0,0.6);
-    display:none; align-items:center; justify-content:center; z-index:100;
-    padding:20px;
-  }
-  .modal-overlay.show{ display:flex; }
-  .modal{
-    background:var(--panel); border:1px solid var(--border); border-radius:10px;
-    padding:22px; max-width:360px; width:100%;
-  }
-  .modal h2{
-    font-family:'IBM Plex Mono',monospace; font-size:13px; letter-spacing:0.04em;
-    text-transform:uppercase; color:var(--text); margin:0 0 6px;
-  }
-  .modal p{ font-size:12.5px; color:var(--text-faint); margin:0 0 14px; line-height:1.5; }
-  .modal input{
-    width:100%; background:var(--panel-2); border:1px solid var(--border);
-    color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:14px;
-    padding:10px 12px; border-radius:6px; outline:none; margin-bottom:10px;
-  }
-  .modal input:focus{ border-color:var(--accent); }
-  .modal-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:6px; }
-  .modal-error{ color:var(--red); font-size:12px; margin:-4px 0 10px; display:none; }
-  .modal-error.show{ display:block; }
-
   .loading-state{
     text-align:center; padding:60px 20px; color:var(--text-faint);
     font-family:'IBM Plex Mono',monospace; font-size:13px;
@@ -305,6 +284,7 @@
   @media (max-width:600px){
     h1{ font-size:12px; }
     .subtitle{ display:none; }
+    .storage-note{ display:none; }
   }
 </style>
 </head>
@@ -317,8 +297,9 @@
       <h1>Certiverse Proctor Hub</h1>
       <span class="subtitle">Canned Messages</span>
       <div class="spacer">
+        <span class="storage-note" id="storageNote"></span>
         <span class="save-status" id="saveStatus"></span>
-        <div class="edit-toggle" id="editToggle">🔒 Edit</div>
+        <div class="edit-toggle" id="editToggle">Edit</div>
       </div>
     </div>
     <div class="search-wrap">
@@ -333,19 +314,6 @@
 <main id="main"><div class="loading-state">Loading messages…</div></main>
 
 <div class="toast" id="toast">Copied to clipboard</div>
-
-<div class="modal-overlay" id="passModal">
-  <div class="modal">
-    <h2 id="passModalTitle">Enter edit passcode</h2>
-    <p id="passModalDesc">This gate is just a light deterrent, not real security — anyone with the passcode can edit. Everyone can still view the page without it.</p>
-    <div class="modal-error" id="passModalError">Incorrect passcode.</div>
-    <input type="password" id="passInput" placeholder="Passcode" autocomplete="off">
-    <div class="modal-actions">
-      <div class="edit-btn" id="passCancel">Cancel</div>
-      <div class="edit-btn primary" id="passSubmit">Unlock</div>
-    </div>
-  </div>
-</div>
 
 <script>
 const DEFAULT_DATA = [
@@ -460,12 +428,31 @@ const DEFAULT_DATA = [
 ];
 
 const STORAGE_KEY = 'certiverse-canned-messages';
-const PASS_KEY = 'certiverse-canned-messages-editpass';
+
+// --- Storage adapter -------------------------------------------------
+// Uses window.storage (Claude artifact persistence) when it's available.
+// Falls back to localStorage so this file also works as a plain static
+// page — e.g. hosted on GitHub Pages — where window.storage doesn't exist.
+// In the localStorage fallback, data is per-browser only (not shared
+// across visitors), since there's no backend to sync it through.
+const hasCloudStorage = typeof window.storage !== 'undefined' && window.storage;
+
+const localAdapter = {
+  async get(key){
+    const raw = localStorage.getItem(key);
+    return raw === null ? null : { key, value: raw };
+  },
+  async set(key, value){
+    localStorage.setItem(key, value);
+    return { key, value };
+  }
+};
+
+const storageAdapter = hasCloudStorage ? window.storage : localAdapter;
 
 let DATA = [];
 let activeCat = 'all';
 let isEditMode = false;
-let editPasscode = null; // known passcode fetched from shared storage (null = not yet checked / not set)
 let editingItemKey = null; // "cat|tag" currently being edited inline
 
 const main = document.getElementById('main');
@@ -475,22 +462,20 @@ const toast = document.getElementById('toast');
 const editToggle = document.getElementById('editToggle');
 const saveStatus = document.getElementById('saveStatus');
 const statusDot = document.getElementById('statusDot');
-const passModal = document.getElementById('passModal');
-const passInput = document.getElementById('passInput');
-const passModalError = document.getElementById('passModalError');
-const passModalTitle = document.getElementById('passModalTitle');
-const passModalDesc = document.getElementById('passModalDesc');
+const storageNote = document.getElementById('storageNote');
+
+storageNote.textContent = hasCloudStorage ? 'synced' : 'saved on this device';
 
 async function loadData(){
   try{
-    const result = await window.storage.get(STORAGE_KEY, true);
+    const result = await storageAdapter.get(STORAGE_KEY, true);
     DATA = result && result.value ? JSON.parse(result.value) : null;
   }catch(e){
     DATA = null;
   }
   if(!DATA){
     DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
-    try{ await window.storage.set(STORAGE_KEY, JSON.stringify(DATA), true); }catch(e){}
+    try{ await storageAdapter.set(STORAGE_KEY, JSON.stringify(DATA), true); }catch(e){}
   }
   buildCatPills();
   render();
@@ -500,7 +485,7 @@ async function saveData(){
   saveStatus.textContent = 'Saving…';
   saveStatus.className = 'save-status saving';
   try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(DATA), true);
+    await storageAdapter.set(STORAGE_KEY, JSON.stringify(DATA), true);
     saveStatus.textContent = 'Saved';
     saveStatus.className = 'save-status saved';
     setTimeout(() => { if(saveStatus.textContent === 'Saved') saveStatus.textContent = ''; }, 1600);
@@ -768,77 +753,24 @@ document.addEventListener('keydown', e => {
     searchInput.focus();
   }
   if(e.key === 'Escape'){
-    if(passModal.classList.contains('show')){ closePassModal(); return; }
     searchInput.value = '';
     searchInput.blur();
     render();
   }
 });
 
-// --- Edit-mode passcode gate ---
-editToggle.addEventListener('click', async () => {
-  if(isEditMode){
-    isEditMode = false;
-    editingItemKey = null;
-    updateEditUI();
-    buildCatPills();
-    render();
-    return;
-  }
-  await openPassModal();
-});
-
-async function openPassModal(){
-  let stored = null;
-  try{
-    const result = await window.storage.get(PASS_KEY, true);
-    stored = result ? result.value : null;
-  }catch(e){ stored = null; }
-  editPasscode = stored;
-
-  if(editPasscode){
-    passModalTitle.textContent = 'Enter edit passcode';
-    passModalDesc.textContent = 'This gate is a light deterrent, not real security — anyone with the passcode can edit. Everyone can still view the page without it.';
-  } else {
-    passModalTitle.textContent = 'Set an edit passcode';
-    passModalDesc.textContent = 'No passcode has been set yet. Choose one now — you\u2019ll need it (and anyone else editing will need it) going forward. Viewing never requires it.';
-  }
-  passModalError.classList.remove('show');
-  passInput.value = '';
-  passModal.classList.add('show');
-  setTimeout(() => passInput.focus(), 50);
-}
-
-function closePassModal(){
-  passModal.classList.remove('show');
-}
-
-document.getElementById('passCancel').addEventListener('click', closePassModal);
-document.getElementById('passSubmit').addEventListener('click', submitPass);
-passInput.addEventListener('keydown', e => { if(e.key === 'Enter') submitPass(); });
-
-async function submitPass(){
-  const val = passInput.value;
-  if(!val){ return; }
-  if(editPasscode){
-    if(val !== editPasscode){
-      passModalError.classList.add('show');
-      return;
-    }
-  } else {
-    try{ await window.storage.set(PASS_KEY, val, true); }catch(e){}
-    editPasscode = val;
-  }
-  isEditMode = true;
-  closePassModal();
+// --- Edit mode toggle (no passcode — anyone viewing the page can edit) ---
+editToggle.addEventListener('click', () => {
+  isEditMode = !isEditMode;
+  if(!isEditMode) editingItemKey = null;
   updateEditUI();
   buildCatPills();
   render();
-}
+});
 
 function updateEditUI(){
   editToggle.classList.toggle('active', isEditMode);
-  editToggle.innerHTML = isEditMode ? '🔓 Editing — tap to lock' : '🔒 Edit';
+  editToggle.textContent = isEditMode ? 'Editing — tap to lock' : 'Edit';
   statusDot.classList.toggle('editing', isEditMode);
 }
 
