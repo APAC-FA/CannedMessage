@@ -4,7 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Certiverse Proctor Hub — Canned Messages</title>
 <style>
-  :root{
+  :root[data-theme="dark"]{
     --bg:#0F1419;
     --panel:#161C25;
     --panel-2:#1C232E;
@@ -19,21 +19,45 @@
     --red:#E8636F;
     --red-dim:#4A2429;
     --green:#6FCF97;
+    --scrollbar:#2A323D;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"]{
+    --bg:#F5F6F8;
+    --panel:#FFFFFF;
+    --panel-2:#F0F2F5;
+    --border:#DCE0E6;
+    --text:#1B2430;
+    --text-dim:#5B6470;
+    --text-faint:#8B95A1;
+    --accent:#0F9E90;
+    --accent-dim:#DFF4F1;
+    --amber:#B5720A;
+    --amber-dim:#FBEBD7;
+    --red:#C93A46;
+    --red-dim:#FBE2E4;
+    --green:#2E9E5B;
+    --scrollbar:#D5D9DF;
+    color-scheme: light;
   }
   *{box-sizing:border-box;}
+  html{ background:var(--bg); }
   body{
     margin:0;
     background:var(--bg);
     color:var(--text);
     font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     -webkit-font-smoothing:antialiased;
+    transition:background .15s ease, color .15s ease;
   }
   .topbar{
     position:sticky; top:0; z-index:10;
-    background:rgba(15,20,25,0.96);
+    background:var(--bg);
+    background:color-mix(in srgb, var(--bg) 96%, transparent);
     backdrop-filter:blur(6px);
     border-bottom:1px solid var(--border);
     padding:14px 20px;
+    transition:background .15s ease, border-color .15s ease;
   }
   .topbar-inner{ max-width:980px; margin:0 auto; }
   .title-row{
@@ -55,7 +79,7 @@
     font-family:'IBM Plex Mono',monospace;
   }
   .spacer{ margin-left:auto; display:flex; align-items:center; gap:10px; }
-  .edit-toggle{
+  .edit-toggle, .theme-toggle{
     font-family:'IBM Plex Mono',monospace;
     font-size:11.5px;
     color:var(--text-dim);
@@ -67,8 +91,9 @@
     display:flex; align-items:center; gap:6px;
     white-space:nowrap;
   }
-  .edit-toggle:hover{ border-color:var(--text-faint); color:var(--text); }
+  .edit-toggle:hover, .theme-toggle:hover{ border-color:var(--text-faint); color:var(--text); }
   .edit-toggle.active{ background:var(--amber-dim); border-color:var(--amber); color:var(--amber); }
+  .theme-toggle .icon{ font-size:13px; line-height:1; }
   .save-status{
     font-family:'IBM Plex Mono',monospace;
     font-size:11px; color:var(--text-faint);
@@ -279,7 +304,7 @@
   }
 
   ::-webkit-scrollbar{ height:6px; width:6px; }
-  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
+  ::-webkit-scrollbar-thumb{ background:var(--scrollbar); border-radius:3px; }
 
   @media (max-width:600px){
     h1{ font-size:12px; }
@@ -299,6 +324,7 @@
       <div class="spacer">
         <span class="storage-note" id="storageNote"></span>
         <span class="save-status" id="saveStatus"></span>
+        <div class="theme-toggle" id="themeToggle"><span class="icon" id="themeIcon">☾</span><span id="themeLabel">Dark</span></div>
         <div class="edit-toggle" id="editToggle">Edit</div>
       </div>
     </div>
@@ -430,6 +456,7 @@ const DEFAULT_DATA = [
 ];
 
 const STORAGE_KEY = 'certiverse-canned-messages';
+const THEME_KEY = 'certiverse-proctor-hub-theme';
 
 // --- Storage adapter -------------------------------------------------
 // Uses window.storage (Claude artifact persistence) when it's available.
@@ -456,6 +483,7 @@ let DATA = [];
 let activeCat = 'all';
 let isEditMode = false;
 let editingItemKey = null; // "cat|tag" currently being edited inline
+let theme = 'dark';
 
 const main = document.getElementById('main');
 const searchInput = document.getElementById('search');
@@ -465,8 +493,51 @@ const editToggle = document.getElementById('editToggle');
 const saveStatus = document.getElementById('saveStatus');
 const statusDot = document.getElementById('statusDot');
 const storageNote = document.getElementById('storageNote');
+const themeToggle = document.getElementById('themeToggle');
+const themeIcon = document.getElementById('themeIcon');
+const themeLabel = document.getElementById('themeLabel');
 
 storageNote.textContent = hasCloudStorage ? 'synced' : 'saved on this device';
+
+// --- Theme ------------------------------------------------------------
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme', theme);
+  const isDark = theme === 'dark';
+  themeIcon.textContent = isDark ? '☾' : '☀';
+  themeLabel.textContent = isDark ? 'Dark' : 'Light';
+}
+
+async function loadTheme(){
+  let saved = null;
+  try{
+    // theme is a personal display preference, stored non-shared
+    const result = (hasCloudStorage
+      ? await storageAdapter.get(THEME_KEY, false)
+      : await storageAdapter.get(THEME_KEY));
+    saved = result && result.value ? result.value : null;
+  }catch(e){
+    saved = null;
+  }
+  if(saved === 'light' || saved === 'dark'){
+    theme = saved;
+  } else {
+    theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  applyTheme();
+}
+
+async function saveTheme(){
+  try{
+    if(hasCloudStorage){ await storageAdapter.set(THEME_KEY, theme, false); }
+    else{ await storageAdapter.set(THEME_KEY, theme); }
+  }catch(e){}
+}
+
+themeToggle.addEventListener('click', () => {
+  theme = theme === 'dark' ? 'light' : 'dark';
+  applyTheme();
+  saveTheme();
+});
 
 async function loadData(){
   try{
@@ -776,6 +847,7 @@ function updateEditUI(){
   statusDot.classList.toggle('editing', isEditMode);
 }
 
+loadTheme();
 loadData();
 </script>
 
